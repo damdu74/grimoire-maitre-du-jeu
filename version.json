@@ -1,0 +1,245 @@
+// ============================================================
+//  THÈME VISUEL — Le Grimoire du Maître du Jeu
+//  Style inspiré de RetroKeys : synthwave / rétro arcade
+//
+//  Palette :
+//    Fond       #0a0014  (noir violet profond)
+//    Fond2      #0d0020  (cartes / panneaux)
+//    Cyan       #00f5ff  (accent principal, textes importants)
+//    Rose       #ff2d78  (accent secondaire, boutons action)
+//    Violet     #9b30ff  (accent tertiaire, bordures actives)
+//    Jaune      #ffe600  (badges, prix, avertissements)
+//    Texte      #e8d5ff  (texte principal)
+//    Muet       #7b6b9a  (texte secondaire, placeholders)
+//    Bordure    rgba(155,48,255,0.3)  (bordures normales)
+// ============================================================
+
+using System.Drawing.Drawing2D;
+using System.Drawing.Text;
+
+namespace GameTrainer.UI;
+
+public static class GrimoireTheme
+{
+    // ── Couleurs ──────────────────────────────────────────────────────────────
+    public static readonly Color BgDeep    = Color.FromArgb(10, 0, 20);       // #0a0014
+    public static readonly Color BgCard    = Color.FromArgb(13, 0, 32);       // #0d0020
+    public static readonly Color BgPanel   = Color.FromArgb(18, 0, 40);       // #120028
+    public static readonly Color Cyan      = Color.FromArgb(0, 245, 255);     // #00f5ff
+    public static readonly Color CyanDim   = Color.FromArgb(0, 188, 212);     // #00bcd4
+    public static readonly Color Pink      = Color.FromArgb(255, 45, 120);    // #ff2d78
+    public static readonly Color PinkDim   = Color.FromArgb(233, 30, 140);    // #e91e8c
+    public static readonly Color Purple    = Color.FromArgb(155, 48, 255);    // #9b30ff
+    public static readonly Color PurpleDim = Color.FromArgb(106, 13, 173);    // #6a0dad
+    public static readonly Color Yellow    = Color.FromArgb(255, 230, 0);     // #ffe600
+    public static readonly Color TextMain  = Color.FromArgb(232, 213, 255);   // #e8d5ff
+    public static readonly Color TextMuted = Color.FromArgb(123, 107, 154);   // #7b6b9a
+    public static readonly Color BorderPurple = Color.FromArgb(80, 155, 48, 255);
+    public static readonly Color BorderCyan   = Color.FromArgb(64, 0, 245, 255);
+    public static readonly Color BorderPink   = Color.FromArgb(80, 255, 45, 120);
+
+    // ── Polices ───────────────────────────────────────────────────────────────
+    // Orbitron n'est pas installé par défaut sur Windows.
+    // On installe les fonts depuis les ressources ou on utilise
+    // une font similaire (Segoe UI / Arial Narrow en fallback).
+    // Pour Orbitron : télécharge depuis Google Fonts et place
+    // Orbitron-Regular.ttf / Orbitron-Bold.ttf dans le dossier de l'exe.
+
+    private static PrivateFontCollection? _fontCollection;
+    private static FontFamily? _orbitronFamily;
+
+    public static FontFamily OrbitronFamily
+    {
+        get
+        {
+            if (_orbitronFamily != null) return _orbitronFamily;
+
+            // Essaie de charger Orbitron depuis le dossier de l'exe
+            string exeDir = AppDomain.CurrentDomain.BaseDirectory;
+            string[] candidates = {
+                Path.Combine(exeDir, "Orbitron-Bold.ttf"),
+                Path.Combine(exeDir, "fonts", "Orbitron-Bold.ttf"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Fonts), "Orbitron-Bold.ttf"),
+            };
+
+            foreach (string path in candidates)
+            {
+                if (File.Exists(path))
+                {
+                    _fontCollection ??= new PrivateFontCollection();
+                    _fontCollection.AddFontFile(path);
+                    _orbitronFamily = _fontCollection.Families.LastOrDefault();
+                    if (_orbitronFamily != null) return _orbitronFamily;
+                }
+            }
+
+            // Fallback : Arial Narrow (géométrique comme Orbitron)
+            return new FontFamily("Arial Narrow");
+        }
+    }
+
+    public static Font FontTitle(float size)    => new(OrbitronFamily, size, FontStyle.Bold);
+    public static Font FontUI(float size)       => new(OrbitronFamily, size, FontStyle.Regular);
+    public static Font FontBody(float size)     => new("Segoe UI", size, FontStyle.Regular);
+    public static Font FontBodyBold(float size) => new("Segoe UI", size, FontStyle.Bold);
+    public static Font FontMono(float size)     => new("Consolas", size, FontStyle.Regular);
+
+    // ── Helpers GDI+ ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Dessine un texte avec effet néon (halo lumineux) comme les CSS text-shadow.
+    /// Technique : on dessine le texte plusieurs fois avec une opacité décroissante
+    /// et des tailles légèrement plus grandes pour simuler le glow.
+    /// </summary>
+    public static void DrawNeonText(Graphics g, string text, Font font,
+        Color glowColor, Color textColor, RectangleF bounds,
+        StringFormat? format = null, float glowRadius = 8f)
+    {
+        format ??= new StringFormat
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center
+        };
+
+        // Couches de glow (du plus large au plus serré)
+        float[] offsets = { glowRadius, glowRadius * 0.6f, glowRadius * 0.3f };
+        int[] alphas    = { 40, 70, 100 };
+
+        for (int i = 0; i < offsets.Length; i++)
+        {
+            using var glowBrush = new SolidBrush(Color.FromArgb(alphas[i], glowColor));
+            var glowBounds = new RectangleF(
+                bounds.X - offsets[i], bounds.Y - offsets[i],
+                bounds.Width + offsets[i] * 2, bounds.Height + offsets[i] * 2);
+            g.DrawString(text, font, glowBrush, glowBounds, format);
+        }
+
+        // Texte principal
+        using var textBrush = new SolidBrush(textColor);
+        g.DrawString(text, font, textBrush, bounds, format);
+    }
+
+    /// <summary>
+    /// Dessine une bordure néon arrondie avec effet de lueur.
+    /// </summary>
+    public static void DrawNeonBorder(Graphics g, Rectangle rect, Color color,
+        float radius = 8f, float glowSize = 6f)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+
+        // Halo externe (glow)
+        for (int i = (int)glowSize; i > 0; i--)
+        {
+            int alpha = (int)(40f * i / glowSize);
+            using var pen = new Pen(Color.FromArgb(alpha, color), 1f);
+            var r = new Rectangle(rect.X - i, rect.Y - i,
+                rect.Width + i * 2, rect.Height + i * 2);
+            using var path = RoundedRect(r, radius + i);
+            g.DrawPath(pen, path);
+        }
+
+        // Bordure principale
+        using var mainPen = new Pen(color, 1.5f);
+        using var mainPath = RoundedRect(rect, radius);
+        g.DrawPath(mainPen, mainPath);
+    }
+
+    /// <summary>
+    /// Remplit un rectangle arrondi.
+    /// </summary>
+    public static void FillRoundedRect(Graphics g, Brush brush, Rectangle rect, float radius)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using var path = RoundedRect(rect, radius);
+        g.FillPath(brush, path);
+    }
+
+    /// <summary>
+    /// Crée un GraphicsPath rectangulaire arrondi.
+    /// </summary>
+    public static GraphicsPath RoundedRect(Rectangle rect, float radius)
+    {
+        radius = Math.Min(radius, Math.Min(rect.Width, rect.Height) / 2f);
+        var path = new GraphicsPath();
+        float d = radius * 2;
+        path.AddArc(rect.X, rect.Y, d, d, 180, 90);
+        path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
+        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
+        path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
+    /// <summary>
+    /// Dessine les scanlines rétro sur toute la surface (effet CRT).
+    /// À appeler dans le Paint de la fenêtre principale.
+    /// </summary>
+    public static void DrawScanlines(Graphics g, Rectangle bounds)
+    {
+        using var pen = new Pen(Color.FromArgb(18, 0, 0, 0), 1f);
+        for (int y = bounds.Top; y < bounds.Bottom; y += 4)
+            g.DrawLine(pen, bounds.Left, y, bounds.Right, y);
+    }
+
+    /// <summary>
+    /// Dessine la grille de fond perspective (effet rétro synthwave).
+    /// </summary>
+    public static void DrawRetroGrid(Graphics g, Rectangle bounds)
+    {
+        int gridSize = 50;
+        using var pen = new Pen(Color.FromArgb(30, 0, 245, 255), 0.5f);
+
+        // Lignes horizontales
+        for (int y = bounds.Top; y < bounds.Bottom; y += gridSize)
+            g.DrawLine(pen, bounds.Left, y, bounds.Right, y);
+
+        // Lignes verticales
+        for (int x = bounds.Left; x < bounds.Right; x += gridSize)
+            g.DrawLine(pen, x, bounds.Top, x, bounds.Bottom);
+    }
+
+    /// <summary>
+    /// Dessine le soleil rétro synthwave en bas de l'écran.
+    /// </summary>
+    public static void DrawRetroSun(Graphics g, Rectangle bounds)
+    {
+        int sunW = 280, sunH = 140;
+        int sunX = bounds.Left + (bounds.Width - sunW) / 2;
+        int sunY = bounds.Bottom - 200;
+
+        // Demi-cercle du soleil
+        using var sunBrush = new SolidBrush(Color.FromArgb(18, 255, 45, 120));
+        g.FillEllipse(sunBrush,
+            new Rectangle(sunX, sunY, sunW, sunH * 2));
+
+        // Lignes horizontales sur le soleil (effet vintage)
+        using var linePen = new Pen(Color.FromArgb(15, 10, 0, 20), 3f);
+        for (int y = sunY + 10; y < sunY + sunH * 2; y += 15)
+            g.DrawLine(linePen, sunX, y, sunX + sunW, y);
+    }
+
+    /// <summary>
+    /// Dessine la ligne de séparation dégradée (purple→pink→cyan).
+    /// </summary>
+    public static void DrawRainbowLine(Graphics g, int x, int y, int width)
+    {
+        using var brush = new LinearGradientBrush(
+            new Point(x, y), new Point(x + width, y),
+            Color.Transparent, Color.Transparent);
+
+        var blend = new ColorBlend(5);
+        blend.Colors = new[]
+        {
+            Color.Transparent,
+            Purple,
+            Pink,
+            Cyan,
+            Color.Transparent
+        };
+        blend.Positions = new[] { 0f, 0.2f, 0.5f, 0.8f, 1f };
+        brush.InterpolationColors = blend;
+
+        using var pen = new Pen(brush, 1.5f);
+        g.DrawLine(pen, x, y, x + width, y);
+    }
+}
