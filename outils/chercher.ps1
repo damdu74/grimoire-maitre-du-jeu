@@ -9,14 +9,15 @@
 #
 # Les adresses candidates sont gardées dans %TEMP%\grimoire-scan.txt entre deux appels.
 param(
-    [Parameter(Mandatory)][ValidateSet('premier','suivant','ecrire','pointeurs','lire')] [string]$Action,
+    [Parameter(Mandatory)][ValidateSet('premier','suivant','ecrire','pointeurs','lire','ecrivain')] [string]$Action,
     [Parameter(Mandatory)][string]$Jeu,
     [long]$Valeur,
     [string]$Adresse,
     [string]$Chemin,
     [int]$ProcessId,
     [int]$Profondeur = 4,
-    [int]$OffsetMax = 0x1000
+    [int]$OffsetMax = 0x1000,
+    [int]$Secondes = 20
 )
 $ErrorActionPreference = 'Stop'
 $etat = Join-Path $env:TEMP 'grimoire-scan.txt'
@@ -132,6 +133,83 @@ public static class Mem
         return found;
     }
 
+    // ── « Qui écrit à cette adresse » : point d'arrêt matériel (comme Cheat Engine) ──
+    [DllImport("kernel32.dll", SetLastError = true)] static extern bool DebugActiveProcess(int pid);
+    [DllImport("kernel32.dll")] static extern bool DebugActiveProcessStop(int pid);
+    [DllImport("kernel32.dll")] static extern bool DebugSetProcessKillOnExit(bool k);
+    [DllImport("kernel32.dll")] static extern bool WaitForDebugEvent(byte[] ev, uint ms);
+    [DllImport("kernel32.dll")] static extern bool ContinueDebugEvent(int pid, int tid, uint status);
+    [DllImport("kernel32.dll")] static extern bool Wow64GetThreadContext(IntPtr t, uint[] c);
+    [DllImport("kernel32.dll")] static extern bool Wow64SetThreadContext(IntPtr t, uint[] c);
+    [DllImport("kernel32.dll")] static extern int Wow64SuspendThread(IntPtr t);
+    [DllImport("kernel32.dll")] static extern int ResumeThread(IntPtr t);
+
+    // WOW64_CONTEXT vu comme 179 uint : [0]=flags [1]=Dr0 [5]=Dr6 [6]=Dr7 [46]=Eip
+    static void SetDr(IntPtr t, uint addr, uint dr7)
+    {
+        var c = new uint[179]; c[0] = 0x10010;
+        if (!Wow64GetThreadContext(t, c)) return;
+        c[0] = 0x10010; c[1] = addr; c[5] = 0; c[6] = dr7;
+        Wow64SetThreadContext(t, c);
+    }
+
+    // Renvoie, pour chaque instruction qui a écrit dans addr, l'EIP juste après elle et le nombre de fois
+    public static Dictionary<uint, int> WhatWrites(int pid, uint addr, int seconds)
+    {
+        var hits = new Dictionary<uint, int>();
+        var threads = new Dictionary<int, IntPtr>();
+        const uint DR7 = 0x000D0001;   // Dr0 actif, écriture, 4 octets
+        if (!DebugActiveProcess(pid)) throw new Exception("DebugActiveProcess refusé (" + Marshal.GetLastWin32Error() + ")");
+        DebugSetProcessKillOnExit(false);   // si le script plante, le jeu continue
+        var ev = new byte[176];
+        var end = DateTime.Now.AddSeconds(seconds);
+        try
+        {
+            while (DateTime.Now < end)
+            {
+                if (!WaitForDebugEvent(ev, 200)) continue;
+                uint code = BitConverter.ToUInt32(ev, 0); int tid = BitConverter.ToInt32(ev, 8);
+                uint status = 0x00010002; // DBG_CONTINUE
+                if (code == 3) { var h = (IntPtr)BitConverter.ToInt64(ev, 32); threads[tid] = h; SetDr(h, addr, DR7); }
+                else if (code == 2) { var h = (IntPtr)BitConverter.ToInt64(ev, 16); threads[tid] = h; SetDr(h, addr, DR7); }
+                else if (code == 4) threads.Remove(tid);
+                else if (code == 5) { ContinueDebugEvent(pid, tid, status); break; }
+                else if (code == 1)
+                {
+                    uint ex = BitConverter.ToUInt32(ev, 16);
+                    if (ex == 0x80000004 || ex == 0x4000001E)
+                    {
+                        IntPtr h;
+                        if (threads.TryGetValue(tid, out h))
+                        {
+                            var c = new uint[179]; c[0] = 0x10011;
+                            if (Wow64GetThreadContext(h, c))
+                            {
+                                int n; hits.TryGetValue(c[46], out n); hits[c[46]] = n + 1;
+                                c[0] = 0x10010; c[5] = 0; Wow64SetThreadContext(h, c);
+                            }
+                        }
+                    }
+                    else if (ex != 0x80000003 && ex != 0x4000001F) status = 0x80010001; // pas pour nous
+                }
+                ContinueDebugEvent(pid, tid, status);
+            }
+        }
+        finally
+        {
+            foreach (var h in threads.Values) { Wow64SuspendThread(h); SetDr(h, addr, 0); ResumeThread(h); }
+            // vide les événements en attente avant de se détacher, sinon le jeu peut planter
+            while (WaitForDebugEvent(ev, 300))
+            {
+                uint code = BitConverter.ToUInt32(ev, 0), ex = BitConverter.ToUInt32(ev, 16);
+                bool ours = code != 1 || ex == 0x80000004 || ex == 0x4000001E || ex == 0x80000003 || ex == 0x4000001F;
+                ContinueDebugEvent(pid, BitConverter.ToInt32(ev, 8), ours ? 0x00010002u : 0x80010001u);
+            }
+            DebugActiveProcessStop(pid);
+        }
+        return hits;
+    }
+
     static void Build(ulong loc, Dictionary<ulong, List<ulong[]>> links, ulong target, List<ulong> offs, List<string> found, ulong baseOff, int guard)
     {
         if (guard > 8 || found.Count >= 200) return;
@@ -178,6 +256,17 @@ switch ($Action) {
   'pointeurs' {
     $t = [Mem]::PointerScan((Num $Adresse), $Profondeur, [uint32]$OffsetMax)
     "$($t.Count) chemins trouvés (BaseOffset | Offsets du profil) :"; $t | Select-Object -First 40
+  }
+  'ecrivain' {
+    # Pendant $Secondes, note chaque instruction qui écrit dans l'adresse (fais varier la valeur en jeu)
+    $a = [uint32](Num $Adresse)
+    "Écoute pendant $Secondes s : dépense ou gagne de l'argent en jeu..."
+    $h = [Mem]::WhatWrites($proc.Id, $a, $Secondes)
+    "$($h.Count) instruction(s) ont écrit dans 0x{0:X}" -f $a
+    foreach ($k in $h.Keys) {
+      $avant = [Mem]::Read([uint64]$k - 16, 24)
+      '{0}+0x{1:X}  ({2} fois)  octets [eip-16..eip+8] : {3}' -f [Mem]::ModName, ($k - [Mem]::ModBase), $h[$k], (($avant | ForEach-Object { $_.ToString('X2') }) -join ' ')
+    }
   }
   'lire' {
     # "Napoleon.exe+0xB | 0, 0x10, 0x4C" ou "0xB,0,0x10,0x4C"
