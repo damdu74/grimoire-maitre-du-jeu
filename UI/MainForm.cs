@@ -17,6 +17,17 @@ public class MainForm : Form
     private ProcessManager _pm  = new();
     private MemoryManager?  _mm;
     private MemoryScanner?  _ms;
+    private CheatEngine?    _ce;
+    private GameProfile?    _profile;
+    private List<SortDefinition> _sorts = new();   // les sorts affichés (mêmes objets que les cartes)
+
+    // ── Raccourcis globaux (marchent même quand le jeu a le focus) ──────────────
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint mods, uint vk);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+    private const int WM_HOTKEY = 0x0312;
+    private readonly Dictionary<int, SortDefinition> _hotkeys = new();
 
     // ── Timers ────────────────────────────────────────────────────────────────
     private readonly System.Windows.Forms.Timer _freezeT  = new() { Interval = 100 };
@@ -410,6 +421,7 @@ public class MainForm : Form
         _freezeT.Tick += (s, e) =>
         {
             if (_mm == null || !_pm.IsAlive()) return;
+            _ce?.ExecuteFreeze(_sorts);
             foreach (var addr in _addresses.Where(a => a.IsFrozen))
             {
                 try
@@ -598,11 +610,15 @@ public class MainForm : Form
     {
         _cheatsArea.Controls.Clear();
         _cheatsArea.Invalidate();
+        UnregisterSortHotkeys();
+        _sorts = new();
 
-        var profile = ProfileRegistry.FindProfile(game.ExecutableName);
-        if (profile == null) return;
+        var profile = _profile = ProfileRegistry.FindProfile(game.ExecutableName);
+        if (profile == null) { _ce?.UnloadProfile(); return; }
 
-        var sorts = profile.GetSorts();
+        var sorts = _sorts = profile.GetSorts();
+        if (_ce != null && _pm.IsAttached) _ce.LoadProfile(profile);
+        RegisterSortHotkeys();
         _lblSorts.Text = $"{sorts.Count} SORT{(sorts.Count > 1 ? "S" : "")}";
 
         var resetSorts = sorts.Where(s => s.FreezeValue == "RESET_ALL").ToList();
@@ -690,6 +706,9 @@ public class MainForm : Form
                     ResetAllSorts();
                 else if (active && sort.FreezeValue.StartsWith("SAVE:"))
                     ApplySaveSort(sort);
+                else if (_ce?.CurrentProfile != null && !sort.FreezeValue.StartsWith("SAVE:")
+                         && sort.FreezeValue is not ("RESET_ALL" or "STEAM_ACHIEVEMENTS"))
+                    ApplyMemorySort(sort, active);
             };
 
             _cheatsArea.Controls.Add(card);
@@ -703,12 +722,63 @@ public class MainForm : Form
     private void ResetAllSorts()
     {
         foreach (Control c in _cheatsArea.Controls)
-            if (c is CheatCard card && card.Tag is SortDefinition sort)
+            if (c is CheatCard card)
+                card.SetOn(false);   // déclenche ToggleChanged → sort.IsActive = false, patchs restaurés
+    }
+
+    // Toggle/Slider sont réécrits par le timer freeze ; Value et Patch s'appliquent ici une fois.
+    private void ApplyMemorySort(SortDefinition sort, bool active)
+    {
+        bool ok = sort.Type switch
+        {
+            SortType.Value => !active || _ce!.ApplyValue(sort),
+            SortType.Patch => active ? _ce!.ApplyPatch(sort) : _ce!.RestorePatch(sort),
+            _              => true,
+        };
+        _lblBar.Text      = ok ? $"{(active ? "✅" : "⏹")}  {sort.Name}" : $"❌  {sort.Name} : adresse introuvable";
+        _lblBar.ForeColor = ok ? GT.Green : GT.PinkLight;
+    }
+
+    // ── Raccourcis clavier ────────────────────────────────────────────────────
+    // Format accepté : "F1", "Ctrl+F2", "Alt+Shift+N"...
+    private void RegisterSortHotkeys()
+    {
+        if (!IsHandleCreated) return;
+        int id = 1;
+        foreach (var sort in _sorts.Where(s => !string.IsNullOrWhiteSpace(s.Hotkey)))
+        {
+            uint mods = 0x4000; // MOD_NOREPEAT : maintenir la touche ne bascule pas en boucle
+            Keys key = Keys.None;
+            foreach (var part in sort.Hotkey.Split('+', StringSplitOptions.TrimEntries))
             {
-                sort.IsActive = false;
-                card.IsActive = false;
-                card.Invalidate();
+                switch (part.ToLowerInvariant())
+                {
+                    case "ctrl":  mods |= 0x2; break;
+                    case "alt":   mods |= 0x1; break;
+                    case "shift": mods |= 0x4; break;
+                    default: Enum.TryParse(part, true, out key); break;
+                }
             }
+            if (key == Keys.None) continue;
+            if (RegisterHotKey(Handle, id, mods, (uint)key)) _hotkeys[id] = sort;
+            id++;
+        }
+    }
+
+    private void UnregisterSortHotkeys()
+    {
+        foreach (var id in _hotkeys.Keys) UnregisterHotKey(Handle, id);
+        _hotkeys.Clear();
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if (m.Msg == WM_HOTKEY && _hotkeys.TryGetValue((int)m.WParam, out var sort))
+        {
+            _cheatsArea.Controls.OfType<CheatCard>().FirstOrDefault(c => c.Tag == sort)?.Flip();
+            System.Media.SystemSounds.Asterisk.Play();  // retour sonore : on ne voit pas l'appli en jeu
+        }
+        base.WndProc(ref m);
     }
 
     private void ApplySaveSort(SortDefinition sort, float sliderValue = 1f)
@@ -755,6 +825,8 @@ public class MainForm : Form
             _pm.Attach(pid);
             _mm = new MemoryManager(_pm);
             _ms = new MemoryScanner(_pm, _mm);
+            _ce = new CheatEngine(_pm, _mm);
+            if (_profile != null) _ce.LoadProfile(_profile);
             _ms.ScanStatus += msg => { if (IsHandleCreated) Invoke(() => _lblBar.Text = "🔍  " + msg); };
             RefreshBar();
             _cheatsArea.Invalidate();
@@ -1077,6 +1149,7 @@ public class MainForm : Form
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
         _freezeT.Stop(); _updateT.Stop(); _detectT.Stop();
+        UnregisterSortHotkeys();
         _pm.Dispose();
         base.OnFormClosing(e);
     }

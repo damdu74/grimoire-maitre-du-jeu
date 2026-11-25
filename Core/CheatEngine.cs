@@ -76,11 +76,13 @@ public class CheatEngine
 
     // ── Exécution du freeze (appelé par le Timer 100ms) ───────────────────────
 
-    public void ExecuteFreeze()
+    // Reçoit la liste affichée : GetSorts() recrée des objets neufs à chaque appel,
+    // donc leur IsActive serait toujours false.
+    public void ExecuteFreeze(IEnumerable<SortDefinition> sorts)
     {
-        if (_profile == null || !_pm.IsAlive()) return;
+        if (_profile == null || _moduleBase == IntPtr.Zero || !_pm.IsAlive()) return;
 
-        foreach (var sort in _profile.GetSorts().Where(s => s.IsActive))
+        foreach (var sort in sorts.Where(s => s.IsActive))
         {
             try
             {

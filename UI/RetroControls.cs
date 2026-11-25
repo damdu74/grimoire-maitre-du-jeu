@@ -150,8 +150,11 @@ public class CheatCard : UserControl
         Controls.Add(_toggle);
         Size = new Size(235, 90);
         Cursor = Cursors.Hand;
-        Click += (s, e) => _toggle.IsOn = !_toggle.IsOn;
+        Click += (s, e) => Flip();
     }
+
+    public void Flip() => _toggle.IsOn = !_toggle.IsOn;
+    public void SetOn(bool on) => _toggle.IsOn = on;
 
     protected override void OnResize(EventArgs e)
     {
