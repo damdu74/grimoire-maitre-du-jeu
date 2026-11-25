@@ -34,7 +34,6 @@ public class MainForm : Form
     // ── Timers ────────────────────────────────────────────────────────────────
     private readonly System.Windows.Forms.Timer _freezeT  = new() { Interval = 100 };
     private readonly System.Windows.Forms.Timer _updateT  = new() { Interval = 600 };
-    private readonly System.Windows.Forms.Timer _detectT  = new() { Interval = 6000 };
 
     // ── Data ──────────────────────────────────────────────────────────────────
     private List<DetectedGame>  _games    = new();
@@ -519,18 +518,11 @@ public class MainForm : Form
             catch { }
         };
 
-        _detectT.Tick += (s, e) =>
-        {
-            try { GameDetector.RefreshRunningStatus(_games); Invoke(BuildSidebarList); }
-            catch { }
-        };
-
         Load += (s, e) =>
         {
             Reflow();
             _freezeT.Start();
             _updateT.Start();
-            _detectT.Start();
             DetectAsync();
         };
     }
@@ -546,9 +538,13 @@ public class MainForm : Form
         if (IsHandleCreated) Invoke(BuildSidebarList);
     }
 
+    // Ne pas appeler en boucle : reconstruire la liste la ferait sauter.
+    // L'état « Actif » des jeux est rafraîchi en place par le timer _updateT.
     private void BuildSidebarList()
     {
-        _gameList.Controls.Clear();
+        int scroll = -_gameList.AutoScrollPosition.Y;   // garde la position de défilement
+        _gameList.SuspendLayout();
+        foreach (Control c in _gameList.Controls.Cast<Control>().ToList()) c.Dispose();
         int y = 0;
         GameDetector.RefreshRunningStatus(_games);
 
@@ -585,6 +581,8 @@ public class MainForm : Form
             y += 52;
         }
         // Hauteur fixée par Reflow : la liste défile au lieu de recouvrir « Ajouter un jeu »
+        _gameList.ResumeLayout();
+        _gameList.AutoScrollPosition = new Point(0, scroll);
         RefreshBar();
     }
 
@@ -1290,7 +1288,7 @@ public class MainForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        _freezeT.Stop(); _updateT.Stop(); _detectT.Stop();
+        _freezeT.Stop(); _updateT.Stop();
         UnregisterSortHotkeys();
         _pm.Dispose();
         base.OnFormClosing(e);
