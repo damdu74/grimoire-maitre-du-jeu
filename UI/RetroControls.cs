@@ -241,6 +241,7 @@ public class GameSidebarItem : Control
     public bool   IsRunning  { get; set; } = false;
     public bool   IsSelected { get; set; } = false;
     public bool   HasCheats  { get; set; } = false;   // un profil de triches existe pour ce jeu
+    public bool   HasWindow  { get; set; } = false;   // IsRunning sans fenêtre = en arrière-plan
     public Image? GameImage  { get; set; } = null;
 
     private bool _hov = false;
@@ -309,8 +310,9 @@ public class GameSidebarItem : Control
         using var statusFont = GT.Body(9f);
         if (IsRunning)
         {
-            g.FillEllipse(new SolidBrush(GT.Green), 48, Height - 17, 6, 6);
-            g.DrawString("Actif", statusFont, new SolidBrush(GT.Green),
+            var (col, txt) = HasWindow ? (GT.Green, "Actif") : (GT.Orange, "En arrière-plan");
+            g.FillEllipse(new SolidBrush(col), 48, Height - 17, 6, 6);
+            g.DrawString(txt, statusFont, new SolidBrush(col),
                 new RectangleF(58, Height - 20, Width - 66, 14));
         }
         else

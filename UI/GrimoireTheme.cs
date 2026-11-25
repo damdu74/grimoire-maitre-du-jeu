@@ -25,6 +25,7 @@ public static class GT
     public static readonly Color PinkLight = Color.FromArgb(232, 112, 136);  // #e87088  texte badge
     public static readonly Color Yellow    = Color.FromArgb(212, 184,  64);  // #d4b840  jaune doré
     public static readonly Color Green     = Color.FromArgb( 61, 214, 140);  // #3dd68c  actif
+    public static readonly Color Orange    = Color.FromArgb(232, 146,  60);  // #e8923c  en arrière-plan
 
     // ── Textes ────────────────────────────────────────────────────────────────
     public static readonly Color TextWhite  = Color.FromArgb(234, 242, 255); // #eaf2ff  titres

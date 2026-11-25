@@ -44,6 +44,9 @@ public class DetectedGame
     public string? CoverUrl { get; set; }           // URL de l'image (si disponible)
     public int? SteamAppId { get; set; }
     public bool IsRunning { get; set; } = false;
+    // false alors que IsRunning = true → le processus tourne sans fenêtre
+    // (jeu resté bloqué après fermeture, ou jeu en train de démarrer)
+    public bool HasWindow { get; set; } = false;
     public int? RunningPid { get; set; }
     public Image? GameImage { get; set; } = null;
 
@@ -658,18 +661,22 @@ public class GameDetector
         // GroupBy pour éviter les doublons d'exe (ex: csrss.exe lancé plusieurs fois)
         var runningExes = Process.GetProcesses()
             .GroupBy(p => p.ProcessName + ".exe", StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.First().Id, StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
         foreach (var game in games)
         {
-            if (runningExes.TryGetValue(game.ExecutableName, out int pid))
+            if (runningExes.TryGetValue(game.ExecutableName, out var procs))
             {
-                game.IsRunning = true;
-                game.RunningPid = pid;
+                // Préfère le processus qui a une fenêtre (le vrai jeu) s'il y en a plusieurs
+                var withWindow = procs.FirstOrDefault(p => { try { return p.MainWindowHandle != IntPtr.Zero; } catch { return false; } });
+                game.IsRunning  = true;
+                game.HasWindow  = withWindow != null;
+                game.RunningPid = (withWindow ?? procs[0]).Id;
             }
             else
             {
-                game.IsRunning = false;
+                game.IsRunning  = false;
+                game.HasWindow  = false;
                 game.RunningPid = null;
             }
         }

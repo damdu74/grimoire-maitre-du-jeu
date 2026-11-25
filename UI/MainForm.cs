@@ -504,7 +504,10 @@ public class MainForm : Form
                 GameDetector.RefreshRunningStatus(_games);
                 foreach (Control c in _gameList.Controls)
                     if (c is GameSidebarItem item && item.Tag is DetectedGame g)
-                    { bool was = item.IsRunning; item.IsRunning = g.IsRunning; if (was != item.IsRunning) item.Invalidate(); }
+                    {
+                        if (item.IsRunning == g.IsRunning && item.HasWindow == g.HasWindow) continue;
+                        item.IsRunning = g.IsRunning; item.HasWindow = g.HasWindow; item.Invalidate();
+                    }
 
                 // Le jeu sélectionné vient de démarrer → connexion automatique (une tentative par PID)
                 if (_selected is { IsRunning: true, RunningPid: int pid } && !_pm.IsAttached && pid != _attachTriedPid)
@@ -568,6 +571,7 @@ public class MainForm : Form
                 GameName   = (isFav ? "★ " : "") + game.Name,
                 GameEmoji  = GuessEmoji(game.Name),
                 IsRunning  = game.IsRunning,
+                HasWindow  = game.HasWindow,
                 HasCheats  = ProfileRegistry.FindProfile(game.ExecutableName) != null,
                 IsSelected = _selected?.ExecutableName == game.ExecutableName,
                 GameImage  = game.GameImage,
@@ -945,9 +949,10 @@ public class MainForm : Form
     {
         bool connected = game.IsRunning && _pm.IsAttached && _pm.IsAlive();
         (_lblStatus.Text, _lblStatus.ForeColor, _lblStatus.BackColor) =
+            !game.IsRunning ? ("● ARRÊTÉ",      GT.TextMuted, Color.FromArgb(14, 80, 105, 150)) :
+            !game.HasWindow ? ("● EN ARRIÈRE-PLAN", GT.Orange, Color.FromArgb(16, 232, 146, 60)) :
             connected       ? ("● CONNECTÉ",    GT.Green,     Color.FromArgb(16, 61, 214, 140)) :
-            game.IsRunning  ? ("● EN COURS",    GT.Yellow,    Color.FromArgb(16, 212, 184, 64)) :
-                              ("● ARRÊTÉ",      GT.TextMuted, Color.FromArgb(14, 80, 105, 150));
+                              ("● EN COURS",    GT.Yellow,    Color.FromArgb(16, 212, 184, 64));
         _lblBits.Text = _pm.IsAttached ? (_pm.Is64Bit ? "64-BIT" : "32-BIT") : "—";
 
         _btnLaunch.Visible = true;
