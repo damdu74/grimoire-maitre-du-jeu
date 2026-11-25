@@ -830,7 +830,8 @@ public class MainForm : Form
             SortType.Patch => active ? _ce!.ApplyPatch(sort) : _ce!.RestorePatch(sort),
             _              => true,
         };
-        _lblBar.Text      = ok ? $"{(active ? "✅" : "⏹")}  {sort.Name}" : $"❌  {sort.Name} : adresse introuvable";
+        _lblBar.Text      = ok ? $"{(active ? "✅" : "⏹")}  {sort.Name}" : sort.Type == SortType.Patch ? $"❌  {sort.Name} : code du jeu différent (mise à jour ?), rien n'a été modifié"
+                                   : $"❌  {sort.Name} : adresse introuvable";
         _lblBar.ForeColor = ok ? GT.Green : GT.PinkLight;
     }
 

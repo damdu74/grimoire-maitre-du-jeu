@@ -105,6 +105,7 @@ public static class ProfileRegistry
     private static readonly List<GameProfile> _profiles = new()
     {
         new Profiles.AdventureCapitalistProfile(),
+        new Profiles.NapoleonProfile(),
     };
 
     /// <summary>

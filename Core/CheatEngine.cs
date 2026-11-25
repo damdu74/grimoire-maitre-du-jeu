@@ -174,6 +174,10 @@ public class CheatEngine
     {
         var addr = ResolveAddress(sort);
         if (addr == IntPtr.Zero) return false;
+        // Les octets d'origine doivent être là : sinon le jeu a été mis à jour, on ne touche à rien
+        var cur = _mm.ReadBytes(addr, sort.PatchBytes.Length);
+        if (cur.SequenceEqual(sort.PatchBytes)) return true;
+        if (sort.OriginalBytes.Length > 0 && !cur.SequenceEqual(sort.OriginalBytes)) return false;
         return _mm.WriteBytes(addr, sort.PatchBytes);
     }
 
@@ -181,6 +185,7 @@ public class CheatEngine
     {
         var addr = ResolveAddress(sort);
         if (addr == IntPtr.Zero) return false;
+        if (!_mm.ReadBytes(addr, sort.PatchBytes.Length).SequenceEqual(sort.PatchBytes)) return true;
         return _mm.WriteBytes(addr, sort.OriginalBytes);
     }
 
