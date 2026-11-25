@@ -242,6 +242,7 @@ public class GameSidebarItem : Control
     public bool   IsSelected { get; set; } = false;
     public bool   HasCheats  { get; set; } = false;   // un profil de triches existe pour ce jeu
     public bool   HasWindow  { get; set; } = false;   // IsRunning sans fenêtre = en arrière-plan
+    public bool   IsInstalled { get; set; } = true;
     public Image? GameImage  { get; set; } = null;
 
     private bool _hov = false;
@@ -314,6 +315,11 @@ public class GameSidebarItem : Control
             g.FillEllipse(new SolidBrush(col), 48, Height - 17, 6, 6);
             g.DrawString(txt, statusFont, new SolidBrush(col),
                 new RectangleF(58, Height - 20, Width - 66, 14));
+        }
+        else if (!IsInstalled)
+        {
+            g.DrawString("Non installé", statusFont, new SolidBrush(GT.Pink),
+                new RectangleF(48, Height - 20, Width - 56, 14));
         }
         else
         {

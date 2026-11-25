@@ -47,6 +47,7 @@ public class DetectedGame
     // false alors que IsRunning = true → le processus tourne sans fenêtre
     // (jeu resté bloqué après fermeture, ou jeu en train de démarrer)
     public bool HasWindow { get; set; } = false;
+    public bool IsInstalled { get; set; } = true;   // false = dans ma liste mais pas trouvé sur le PC
     public int? RunningPid { get; set; }
     public Image? GameImage { get; set; } = null;
 

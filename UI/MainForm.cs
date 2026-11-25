@@ -537,7 +537,8 @@ public class MainForm : Form
         {
             if (IsHandleCreated) Invoke(() => _lblBar.Text = "🔍  " + msg);
         });
-        _games = await GameDetector.DetectAllGamesAsync(prog);
+        _games = MesJeux.Construire(await GameDetector.DetectAllGamesAsync(prog));
+        _games.AddRange(_manualGames);
         if (IsHandleCreated) Invoke(BuildSidebarList);
     }
 
@@ -572,6 +573,7 @@ public class MainForm : Form
                 GameEmoji  = GuessEmoji(game.Name),
                 IsRunning  = game.IsRunning,
                 HasWindow  = game.HasWindow,
+                IsInstalled = game.IsInstalled,
                 HasCheats  = ProfileRegistry.FindProfile(game.ExecutableName) != null,
                 IsSelected = _selected?.ExecutableName == game.ExecutableName,
                 GameImage  = game.GameImage,
@@ -956,6 +958,16 @@ public class MainForm : Form
         _lblBits.Text = _pm.IsAttached ? (_pm.Is64Bit ? "64-BIT" : "32-BIT") : "—";
 
         _btnLaunch.Visible = true;
+        if (!game.IsInstalled)
+        {
+            // Steam sait ouvrir sa fenêtre d'installation ; sinon rien à lancer
+            (_lblStatus.Text, _lblStatus.ForeColor) = ("● NON INSTALLÉ", GT.Pink);
+            _btnLaunch.Text    = "⬇  INSTALLER";
+            _btnLaunch.Style   = RetroButton.BtnStyle.Pink;
+            _btnLaunch.Enabled = game.SteamAppId.HasValue;
+            _btnLaunch.Invalidate();
+            return;
+        }
         _btnLaunch.Text    = game.IsRunning ? "●  JEU LANCÉ" : "▶  LANCER LE JEU";
         _btnLaunch.Style   = game.IsRunning ? RetroButton.BtnStyle.Cyan : RetroButton.BtnStyle.Pink;
         _btnLaunch.Enabled = !game.IsRunning;
@@ -967,6 +979,12 @@ public class MainForm : Form
         if (_selected == null || _selected.IsRunning) return;
         try
         {
+            if (!_selected.IsInstalled)
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(
+                    $"steam://install/{_selected.SteamAppId}") { UseShellExecute = true });
+                return;
+            }
             var psi = _selected.SteamAppId.HasValue
                 ? new System.Diagnostics.ProcessStartInfo($"steam://rungameid/{_selected.SteamAppId}") { UseShellExecute = true }
                 : new System.Diagnostics.ProcessStartInfo(_selected.ExecutablePath)
