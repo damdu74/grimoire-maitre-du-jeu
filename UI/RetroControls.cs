@@ -240,6 +240,7 @@ public class GameSidebarItem : Control
     public string GameEmoji  { get; set; } = "🎮";
     public bool   IsRunning  { get; set; } = false;
     public bool   IsSelected { get; set; } = false;
+    public bool   HasCheats  { get; set; } = false;   // un profil de triches existe pour ce jeu
     public Image? GameImage  { get; set; } = null;
 
     private bool _hov = false;
@@ -316,6 +317,17 @@ public class GameSidebarItem : Control
         {
             g.DrawString("Inactif", statusFont, new SolidBrush(GT.TextMuted),
                 new RectangleF(48, Height - 20, Width - 56, 14));
+        }
+
+        // Badge « TRICHES » à droite de la ligne de statut
+        if (HasCheats)
+        {
+            using var bf = GT.Orb(6.5f);
+            var bs = g.MeasureString("TRICHES", bf);
+            var br = new Rectangle(Width - (int)bs.Width - 16, Height - 20, (int)bs.Width + 8, 14);
+            GT.FillRound(g, new SolidBrush(Color.FromArgb(40, GT.Pink)), br, 3f);
+            GT.DrawBorder(g, br, Color.FromArgb(120, GT.Pink), 3f, 0.5f);
+            g.DrawString("TRICHES", bf, new SolidBrush(GT.PinkLight), br.X + 4, br.Y + 1);
         }
     }
 }

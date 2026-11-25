@@ -27,6 +27,8 @@ public class MainForm : Form
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
     private const int WM_HOTKEY = 0x0312;
+    [System.Runtime.InteropServices.DllImport("uxtheme.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern int SetWindowTheme(IntPtr hWnd, string app, string? idList);
     private readonly Dictionary<int, SortDefinition> _hotkeys = new();
 
     // ── Timers ────────────────────────────────────────────────────────────────
@@ -48,6 +50,10 @@ public class MainForm : Form
     private Panel _titleBar     = null!;
     private Panel _gameList     = null!;
     private RetroButton _btnAddGame = null!;
+    private TextBox _search = null!;
+    private RetroButton _btnLaunch = null!;
+    private Image? _heroImage;   // grande image de fond de la bannière
+    private int?   _attachTriedPid;
 
     // ── Banner controls ───────────────────────────────────────────────────────
     private Label _lblTitle     = null!;
@@ -88,6 +94,7 @@ public class MainForm : Form
         StartPosition   = FormStartPosition.CenterScreen;
         BackColor       = GT.BgApp;
         DoubleBuffered  = true;
+        ResizeRedraw    = true;   // sinon la grille garde des traces après agrandissement
         Paint          += (s, e) =>
         {
             GT.DrawGrid(e.Graphics, ClientRectangle);
@@ -116,15 +123,14 @@ public class MainForm : Form
             using var ef = new Font("Segoe UI Emoji", 14f);
             g.DrawString("📖", ef, new SolidBrush(GT.TextMain), new PointF(12, 12));
 
-            // "LE GRIMOIRE" — rose mat, pas de glow
+            // "LE GRIMOIRE" rose + "DU MAÎTRE DU JEU" cyan, collés sur une ligne
             using var f = GT.Orb(9f);
             using var b1 = new SolidBrush(GT.PinkLight);
             using var b2 = new SolidBrush(GT.Cyan);
             var sf = new StringFormat { LineAlignment = StringAlignment.Center };
-            g.DrawString("LE GRIMOIRE", f, b1,
-                new RectangleF(46, 0, 145, _titleBar.Height), sf);
-            g.DrawString("DU MAÎTRE DU JEU", f, b2,
-                new RectangleF(193, 0, 240, _titleBar.Height), sf);
+            float w1 = g.MeasureString("LE GRIMOIRE ", f).Width;
+            g.DrawString("LE GRIMOIRE", f, b1, new RectangleF(46, 0, w1, _titleBar.Height), sf);
+            g.DrawString("DU MAÎTRE DU JEU", f, b2, new RectangleF(46 + w1, 0, 300, _titleBar.Height), sf);
         };
         _titleBar.MouseDown += (s, e) => { if (e.Button == MouseButtons.Left) { _dragging = true; _dragOff = new Point(e.X, e.Y); } };
         _titleBar.MouseMove += (s, e) => { if (_dragging) Location = new Point(Location.X + e.X - _dragOff.X, Location.Y + e.Y - _dragOff.Y); };
@@ -163,25 +169,32 @@ public class MainForm : Form
             using var pen = new Pen(Color.FromArgb(30, 0, 180, 210), 0.5f);
             e.Graphics.DrawLine(pen, _sidebar.Width - 1, 0, _sidebar.Width - 1, _sidebar.Height);
 
-            // Logo
-            e.Graphics.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
-            using var ef = new Font("Segoe UI Emoji", 16f);
-            e.Graphics.DrawString("📖", ef, new SolidBrush(GT.TextMain), new PointF(10, 9));
-            using var f1 = GT.Orb(8f);
-            using var b1 = new SolidBrush(GT.PinkLight);
-            using var b2 = new SolidBrush(GT.Cyan);
-            e.Graphics.DrawString("LE GRIMOIRE", f1, b1, new PointF(40, 8));
-            e.Graphics.DrawString("MAÎTRE DU JEU", f1, b2, new PointF(40, 22));
+            // Cadre du champ de recherche
+            GT.DrawBorder(e.Graphics, new Rectangle(8, 10, _sidebar.Width - 17, 28), Color.FromArgb(60, 0, 180, 210), 5f, 1f);
 
             // Label section
+            e.Graphics.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
             using var lf = GT.Orb(7f, false);
             using var lb = new SolidBrush(Color.FromArgb(110, GT.TextMuted));
-            e.Graphics.DrawString("MES JEUX", lf, lb, new PointF(12, 52));
+            e.Graphics.DrawString("MES JEUX", lf, lb, new PointF(12, 48));
         };
+
+        _search = new TextBox
+        {
+            Location        = new Point(16, 16),
+            Width           = _sidebar.Width - 33,
+            BorderStyle     = BorderStyle.None,
+            BackColor       = GT.BgPanel,
+            ForeColor       = GT.TextMain,
+            Font            = GT.Body(10f),
+            PlaceholderText = "🔍  Rechercher un jeu",
+        };
+        _search.TextChanged += (s, e) => BuildSidebarList();
+        _sidebar.Controls.Add(_search);
 
         _gameList = new Panel
         {
-            Location    = new Point(0, 70),
+            Location    = new Point(0, 66),
             Width       = _sidebar.Width,
             BackColor   = GT.BgPanel,
             AutoScroll  = true,
@@ -195,6 +208,8 @@ public class MainForm : Form
         };
         _btnAddGame.Click += OnAddGame;
 
+        // Barres de défilement sombres (thème Windows 10/11) au lieu des barres blanches
+        _gameList.HandleCreated += (s, e) => SetWindowTheme(_gameList.Handle, "DarkMode_Explorer", null);
         _sidebar.Controls.Add(_gameList);
         _sidebar.Controls.Add(_btnAddGame);
         Controls.Add(_sidebar);
@@ -209,16 +224,16 @@ public class MainForm : Form
         _banner = new Panel
         {
             Dock      = DockStyle.Top,
-            Height    = 125,
+            Height    = 190,
             BackColor = GT.BgPanel,
         };
         _banner.Paint += OnBannerPaint;
 
-        // Petite icône style WeMod (40x40)
+        // Jaquette du jeu (format Steam 2:3)
         _picGame = new PictureBox
         {
-            Location    = new Point(16, 42),
-            Size        = new Size(40, 40),
+            Location    = new Point(20, 20),
+            Size        = new Size(100, 150),
             SizeMode    = PictureBoxSizeMode.Zoom,
             BackColor   = Color.FromArgb(18, 0, 180, 210),
             BorderStyle = BorderStyle.None,
@@ -248,19 +263,20 @@ public class MainForm : Form
         _lblTitle = new Label
         {
             AutoSize  = false,
-            Location  = new Point(64, 20),
-            Size      = new Size(600, 32),
-            Text      = "AUCUN JEU ATTACHÉ",
+            Location  = new Point(136, 28),
+            Size      = new Size(600, 40),
+            Text      = "CHOISIS UN JEU",
             ForeColor = GT.TextWhite,
             BackColor = Color.Transparent,
-            Font      = GT.Orb(14f),
+            Font      = GT.Orb(18f),
+            AutoEllipsis = true,
         };
 
         // Bouton favori (étoile) à côté du titre
         _btnFavorite = new Label
         {
             Text      = "☆",
-            Location  = new Point(64, 56),
+            Location  = new Point(134, 74),
             AutoSize  = true,
             ForeColor = Color.FromArgb(100, GT.Yellow),
             BackColor = Color.Transparent,
@@ -270,22 +286,39 @@ public class MainForm : Form
         };
         _btnFavorite.Click += OnToggleFavorite;
 
-        _lblStatus = MakeBadge("● INACTIF", GT.TextMuted,  Color.FromArgb(18, 80, 105, 150), new Point(92, 58));
-        _lblBits   = MakeBadge("—",          GT.TextMuted,  Color.FromArgb(12, 0, 180, 210),  new Point(192, 58));
-        _lblSorts  = MakeBadge("0 SORT",     GT.CyanDim,    Color.FromArgb(14, 0, 180, 210),  new Point(238, 58));
+        _lblStatus = MakeBadge("● ARRÊTÉ",   GT.TextMuted,  Color.FromArgb(18, 80, 105, 150), new Point(164, 77));
+        _lblBits   = MakeBadge("—",          GT.TextMuted,  Color.FromArgb(12, 0, 180, 210),  new Point(0, 77));
+        _lblSorts  = MakeBadge("0 SORT",     GT.CyanDim,    Color.FromArgb(14, 0, 180, 210),  new Point(0, 77));
+        // Les badges suivent la largeur du précédent (le texte du statut change)
+        _lblStatus.SizeChanged += (s, e) => PlaceBadges();
+        _lblBits.SizeChanged   += (s, e) => PlaceBadges();
+
+        // Gros bouton d'action : lance le jeu, ou indique qu'il tourne
+        _btnLaunch = new RetroButton
+        {
+            Text     = "▶  LANCER LE JEU",
+            Style    = RetroButton.BtnStyle.Pink,
+            Location = new Point(136, 122),
+            Size     = new Size(190, 40),
+            Visible  = false,
+        };
+        _btnLaunch.Click += OnLaunchGame;
 
         // Bouton Scanner en haut à droite de la bannière
         _btnScannerOpen = new RetroButton
         {
-            Text   = "🔍 SCANNER",
+            Text   = "SCANNER",
             Style  = RetroButton.BtnStyle.Ghost,
-            Size   = new Size(100, 26),
+            Size   = new Size(130, 30),
             Anchor = AnchorStyles.Top | AnchorStyles.Right,
         };
         _btnScannerOpen.Click += OpenScanner;
 
         _banner.Controls.AddRange(new Control[]
-            { _picGame, _lblTitle, _btnFavorite, _lblStatus, _lblBits, _lblSorts, _btnScannerOpen });
+            { _picGame, _lblTitle, _btnFavorite, _lblStatus, _lblBits, _lblSorts, _btnLaunch, _btnScannerOpen });
+        PlaceBadges();
+        // Rien à afficher tant qu'aucun jeu n'est choisi
+        foreach (var c in new Control[] { _picGame, _btnFavorite, _lblStatus, _lblBits, _lblSorts }) c.Visible = false;
 
         // Zone des sorts
         _cheatsArea = new Panel
@@ -295,16 +328,42 @@ public class MainForm : Form
             Padding     = new Padding(14),
         };
         _cheatsArea.Paint += PaintCheatsEmpty;
+        // Panels : repeindre entièrement au redimensionnement (image de fond, message centré)
+        _banner.Resize     += (s, e) => _banner.Invalidate(true);
+        _cheatsArea.Resize += (s, e) => _cheatsArea.Invalidate();
 
         _mainArea.Controls.Add(_cheatsArea);
         _mainArea.Controls.Add(_banner);
         Controls.Add(_mainArea);
     }
 
+    private void PlaceBadges()
+    {
+        _lblBits.Left  = _lblStatus.Right + 6;
+        _lblSorts.Left = _lblBits.Right + 6;
+    }
+
     private void OnBannerPaint(object? sender, PaintEventArgs e)
     {
         var g = e.Graphics;
-        GT.DrawScanlines(g, new Rectangle(0, 0, _banner.Width, _banner.Height));
+        var full = new Rectangle(0, 0, _banner.Width, _banner.Height);
+
+        // Image « héro » Steam en fond, recadrée en largeur, assombrie vers la gauche
+        if (_heroImage != null)
+        {
+            var src = _heroImage;
+            int srcH = (int)(src.Width * (float)full.Height / full.Width);
+            var srcRect = srcH <= src.Height
+                ? new Rectangle(0, (src.Height - srcH) / 3, src.Width, srcH)
+                : new Rectangle(0, 0, src.Width, src.Height);
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.DrawImage(src, full, srcRect, GraphicsUnit.Pixel);
+            using var shade = new LinearGradientBrush(full,
+                Color.FromArgb(240, GT.BgPanel), Color.FromArgb(120, GT.BgPanel), LinearGradientMode.Horizontal);
+            g.FillRectangle(shade, full);
+        }
+
+        GT.DrawScanlines(g, full);
         GT.DrawRainbowLine(g, 0, _banner.Height - 1, _banner.Width, 100);
         // Bordure arrondie autour de l'image
         if (_picGame != null)
@@ -328,9 +387,10 @@ public class MainForm : Form
         g.DrawString("📖", new Font("Segoe UI Emoji", 36f),
             new SolidBrush(Color.FromArgb(40, GT.Cyan)),
             new RectangleF(0, 55, _cheatsArea.Width, 55), sf);
-        g.DrawString("Attache-toi à un jeu pour voir ses sorts",
-            f2, b2, new RectangleF(0, 118, _cheatsArea.Width, 24), sf);
-        g.DrawString("Utilise le Scanner pour trouver des adresses mémoire",
+        string l1 = _selected == null ? "Choisis un jeu dans la liste à gauche"
+                                      : "Pas encore de triches pour ce jeu";
+        g.DrawString(l1, f2, b2, new RectangleF(0, 118, _cheatsArea.Width, 24), sf);
+        g.DrawString("Le Scanner permet d'en trouver soi-même (lance le jeu d'abord)",
             f2, b2, new RectangleF(0, 142, _cheatsArea.Width, 24), sf);
     }
 
@@ -399,7 +459,7 @@ public class MainForm : Form
         {
             _sidebar.Location = new Point(0, th);
             _sidebar.Size     = new Size(sw, Height - th - sh);
-            _gameList.Size    = new Size(sw, _sidebar.Height - 110);
+            _gameList.Size    = new Size(sw, _sidebar.Height - 66 - 54);
             _btnAddGame.Location = new Point(8, _sidebar.Height - 44);
         }
         if (_mainArea != null)
@@ -409,9 +469,9 @@ public class MainForm : Form
             _cheatsArea.Location = new Point(0, _banner.Height);
             _cheatsArea.Size     = new Size(_mainArea.Width, _mainArea.Height - _banner.Height);
             _banner.Width        = _mainArea.Width;
-            _lblTitle.Size       = new Size(_mainArea.Width - 130, 36);
+            _lblTitle.Size       = new Size(Math.Max(100, _mainArea.Width - 136 - 160), 40);
             if (_btnScannerOpen != null)
-                _btnScannerOpen.Location = new Point(_banner.Width - 112, 12);
+                _btnScannerOpen.Location = new Point(_banner.Width - _btnScannerOpen.Width - 16, 16);
         }
     }
 
@@ -446,6 +506,15 @@ public class MainForm : Form
                 foreach (Control c in _gameList.Controls)
                     if (c is GameSidebarItem item && item.Tag is DetectedGame g)
                     { bool was = item.IsRunning; item.IsRunning = g.IsRunning; if (was != item.IsRunning) item.Invalidate(); }
+
+                // Le jeu sélectionné vient de démarrer → connexion automatique (une tentative par PID)
+                if (_selected is { IsRunning: true, RunningPid: int pid } && !_pm.IsAttached && pid != _attachTriedPid)
+                {
+                    _attachTriedPid = pid;
+                    AttachTo(pid);
+                }
+                if (_selected != null) UpdateRunState(_selected);
+                RefreshLiveValues();
             }
             catch { }
         };
@@ -484,8 +553,11 @@ public class MainForm : Form
         GameDetector.RefreshRunningStatus(_games);
 
         // Trie : favoris en premier, puis actifs, puis alphabétique
+        string q = _search.Text.Trim();
         var sorted = _games
+            .Where(g => q.Length == 0 || g.Name.Contains(q, StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(g => _favorites.Contains(g.ExecutableName))
+            .ThenByDescending(g => ProfileRegistry.FindProfile(g.ExecutableName) != null)
             .ThenByDescending(g => g.IsRunning)
             .ThenBy(g => g.Name)
             .ToList();
@@ -500,17 +572,19 @@ public class MainForm : Form
                 GameName   = (isFav ? "★ " : "") + game.Name,
                 GameEmoji  = GuessEmoji(game.Name),
                 IsRunning  = game.IsRunning,
+                HasCheats  = ProfileRegistry.FindProfile(game.ExecutableName) != null,
                 IsSelected = _selected?.ExecutableName == game.ExecutableName,
                 GameImage  = game.GameImage,
                 Location   = new Point(6, y),
-                Size       = new Size(_gameList.Width - 12, 50),
+                // place réservée à la barre verticale → pas de barre horizontale parasite
+                Size       = new Size(_gameList.Width - 12 - SystemInformation.VerticalScrollBarWidth, 50),
                 Tag        = game,
             };
             item.Click += OnGameClick;
             _gameList.Controls.Add(item);
             y += 52;
         }
-        _gameList.Height = Math.Max(y + 10, _sidebar.Height - 110);
+        // Hauteur fixée par Reflow : la liste défile au lieu de recouvrir « Ajouter un jeu »
         RefreshBar();
     }
 
@@ -706,8 +780,7 @@ public class MainForm : Form
                     ResetAllSorts();
                 else if (active && sort.FreezeValue.StartsWith("SAVE:"))
                     ApplySaveSort(sort);
-                else if (_ce?.CurrentProfile != null && !sort.FreezeValue.StartsWith("SAVE:")
-                         && sort.FreezeValue is not ("RESET_ALL" or "STEAM_ACHIEVEMENTS"))
+                else if (_ce?.CurrentProfile != null && IsMemorySort(sort))
                     ApplyMemorySort(sort, active);
             };
 
@@ -724,6 +797,24 @@ public class MainForm : Form
         foreach (Control c in _cheatsArea.Controls)
             if (c is CheatCard card)
                 card.SetOn(false);   // déclenche ToggleChanged → sort.IsActive = false, patchs restaurés
+    }
+
+    // Sorts qui agissent en mémoire (les autres éditent la sauvegarde ou sont des commandes)
+    private static bool IsMemorySort(SortDefinition s) =>
+        !s.FreezeValue.StartsWith("SAVE:") && s.FreezeValue is not ("RESET_ALL" or "STEAM_ACHIEVEMENTS");
+
+    // Affiche la valeur actuelle lue dans le jeu (« 12 500 ») sur chaque carte
+    private void RefreshLiveValues()
+    {
+        if (_ce?.CurrentProfile == null || !_pm.IsAlive()) return;
+        foreach (var card in _cheatsArea.Controls.OfType<CheatCard>())
+        {
+            if (card.Tag is not SortDefinition s || !IsMemorySort(s) || s.Type is SortType.Patch or SortType.Slider) continue;
+            var v = _ce.ReadCurrentValue(s);
+            if (v == "?" || v == card.ValueText) continue;
+            card.ValueText = v;
+            card.Invalidate();
+        }
     }
 
     // Toggle/Slider sont réécrits par le timer freeze ; Value et Patch s'appliquent ici une fois.
@@ -840,24 +931,52 @@ public class MainForm : Form
     private void UpdateBanner(DetectedGame game)
     {
         _lblTitle.Text = game.Name.ToUpper();
-        if (game.IsRunning)
-        {
-            _lblStatus.Text      = $"● EN COURS — PID {game.RunningPid}";
-            _lblStatus.ForeColor = GT.Green;
-            _lblStatus.BackColor = Color.FromArgb(16, 61, 214, 140);
-        }
-        else
-        {
-            _lblStatus.Text      = "● INACTIF";
-            _lblStatus.ForeColor = GT.TextMuted;
-            _lblStatus.BackColor = Color.FromArgb(14, 80, 105, 150);
-        }
-        _lblBits.Text = _pm.IsAttached ? (_pm.Is64Bit ? "64-BIT" : "32-BIT") : "—";
-        _banner.Invalidate();
+        foreach (var c in new Control[] { _picGame, _btnFavorite, _lblStatus, _lblBits, _lblSorts }) c.Visible = true;
+        _lblSorts.Text = "0 SORT";   // LoadProfileForGame le remplace si un profil existe
+        UpdateRunState(game);
         UpdateFavoriteButton();
 
-        // Charge l'image du jeu
+        // Charge la jaquette et l'image de fond
         LoadGameImage(game);
+        _heroImage = game.SteamAppId.HasValue ? FindSteamCacheFile(game.SteamAppId.Value, "library_hero.jpg") : null;
+        _banner.Invalidate(true);
+    }
+
+    // Voyant + bouton d'action, appelé aussi par le timer quand le jeu démarre ou s'arrête
+    private void UpdateRunState(DetectedGame game)
+    {
+        bool connected = game.IsRunning && _pm.IsAttached && _pm.IsAlive();
+        (_lblStatus.Text, _lblStatus.ForeColor, _lblStatus.BackColor) =
+            connected       ? ("● CONNECTÉ",    GT.Green,     Color.FromArgb(16, 61, 214, 140)) :
+            game.IsRunning  ? ("● EN COURS",    GT.Yellow,    Color.FromArgb(16, 212, 184, 64)) :
+                              ("● ARRÊTÉ",      GT.TextMuted, Color.FromArgb(14, 80, 105, 150));
+        _lblBits.Text = _pm.IsAttached ? (_pm.Is64Bit ? "64-BIT" : "32-BIT") : "—";
+
+        _btnLaunch.Visible = true;
+        _btnLaunch.Text    = game.IsRunning ? "●  JEU LANCÉ" : "▶  LANCER LE JEU";
+        _btnLaunch.Style   = game.IsRunning ? RetroButton.BtnStyle.Cyan : RetroButton.BtnStyle.Pink;
+        _btnLaunch.Enabled = !game.IsRunning;
+        _btnLaunch.Invalidate();
+    }
+
+    private void OnLaunchGame(object? sender, EventArgs e)
+    {
+        if (_selected == null || _selected.IsRunning) return;
+        try
+        {
+            var psi = _selected.SteamAppId.HasValue
+                ? new System.Diagnostics.ProcessStartInfo($"steam://rungameid/{_selected.SteamAppId}") { UseShellExecute = true }
+                : new System.Diagnostics.ProcessStartInfo(_selected.ExecutablePath)
+                  { UseShellExecute = true, WorkingDirectory = Path.GetDirectoryName(_selected.ExecutablePath) ?? "" };
+            System.Diagnostics.Process.Start(psi);
+            _lblBar.Text      = $"🚀  Lancement de {_selected.Name}… le Grimoire s'y connectera tout seul";
+            _lblBar.ForeColor = GT.Yellow;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Impossible de lancer le jeu :\n{ex.Message}", "Grimoire",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     /// <summary>
@@ -925,8 +1044,31 @@ public class MainForm : Form
             _ = LoadSteamImageAsync(game);
     }
 
+    // Steam récent range ses images dans librarycache\<appid>\[sous-dossier hashé\]nom.jpg
+    private Image? FindSteamCacheFile(int appId, string fileName)
+    {
+        string? steamPath =
+            Microsoft.Win32.Registry.GetValue(
+                @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath", null) as string
+            ?? Microsoft.Win32.Registry.GetValue(
+                @"HKEY_LOCAL_MACHINE\SOFTWARE\Valve\Steam", "InstallPath", null) as string;
+        if (steamPath == null) return null;
+        string dir = Path.Combine(steamPath, "appcache", "librarycache", appId.ToString());
+        if (!Directory.Exists(dir)) return null;
+        var path = Directory.EnumerateFiles(dir, fileName, SearchOption.AllDirectories).FirstOrDefault();
+        if (path == null) return null;
+        // Copie en mémoire : Image.FromFile verrouillerait le fichier de Steam
+        try { using var ms = new MemoryStream(File.ReadAllBytes(path)); return Image.FromStream(ms); }
+        catch { return null; }
+    }
+
     private Image? FindSteamCacheImage(int appId)
     {
+        var img = FindSteamCacheFile(appId, "library_600x900.jpg")
+               ?? FindSteamCacheFile(appId, "library_capsule.jpg")
+               ?? FindSteamCacheFile(appId, "library_header.jpg");
+        if (img != null) return img;
+
         string? steamPath =
             Microsoft.Win32.Registry.GetValue(
                 @"HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Valve\Steam", "InstallPath", null) as string
